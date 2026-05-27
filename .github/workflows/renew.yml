@@ -1,4 +1,4 @@
-name: DigitalPlat 域名自动续期
+name: DigitalPlat 域名自动续期 (代理破盾版)
 
 on:
   schedule:
@@ -56,6 +56,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          # 使用 xvfb-run 开启虚拟桌面环境执行脚本
           xvfb-run -a --server-args="-screen 0 1920x1080x24" python renew.py
 
       # 7. 无论成功与否，一律上传运行截图和 JSON 报告，极大方便在面板查看卡盾现场
