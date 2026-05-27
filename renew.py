@@ -1,7 +1,6 @@
 # renew.py
-# 最后更新时间: 2025-07-17
-# 功能：DigitalPlat 免费域名自动续期
-# 支持：多账号、Bark/微信/Telegram 通知
+# 最后更新时间: 2026-05-27
+# 功能：DigitalPlat 免费域名自动续期（支持多账号、Bark/微信/Telegram 通知）
 
 import os
 import sys
@@ -21,36 +20,37 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ======================= 配置加载 =======================
-# --- 账号配置（优先使用多账号 JSON，否则回退到单账号）---
 DP_ACCOUNTS_JSON = os.getenv("DP_ACCOUNTS")
 DP_EMAIL = os.getenv("DP_EMAIL")
 DP_PASSWORD = os.getenv("DP_PASSWORD")
 
-# --- Bark 通知配置 ---
+# Bark
 BARK_KEY = os.getenv("BARK_KEY")
-BARK_SERVER = os.getenv("BARK_SERVER")          # 可选，自建 Bark 服务器
+BARK_SERVER = os.getenv("BARK_SERVER")
 
-# --- 微信通知配置 ---
+# 微信
 ENABLE_WECHAT = os.getenv("ENABLE_WECHAT", "false").lower() == "true"
 WECHAT_API_URL = os.getenv("WECHAT_API_URL")
 WECHAT_AUTH_TOKEN = os.getenv("WECHAT_AUTH_TOKEN")
 
-# --- Telegram 通知配置 ---
+# Telegram
 ENABLE_TELEGRAM = os.getenv("ENABLE_TELEGRAM", "false").lower() == "true"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# --- 网站 URL ---
+# 网站 URL
 LOGIN_URL = "https://dash.domain.digitalplat.org/auth/login"
 DOMAINS_URL = "https://dash.domain.digitalplat.org/panel/main?page=%2Fpanel%2Fdomains"
+BASE_URL = "https://dash.domain.digitalplat.org/"
 
-# --- 超时配置 ---
+# 超时配置
 TIMEOUTS = {
     "page_load": 60000,
     "element_wait": 30000,
     "navigation": 60000,
-    "login_wait": 180000
+    "login_wait": 180000,
 }
+
 
 # ======================= 账号解析 =======================
 def get_accounts():
@@ -61,9 +61,8 @@ def get_accounts():
             if isinstance(accounts, list) and len(accounts) > 0:
                 logger.info(f"使用多账号模式，共 {len(accounts)} 个账号")
                 return accounts
-            else:
-                logger.error("DP_ACCOUNTS 必须是一个非空 JSON 数组")
-                sys.exit(1)
+            logger.error("DP_ACCOUNTS 必须是一个非空 JSON 数组")
+            sys.exit(1)
         except json.JSONDecodeError as e:
             logger.error(f"DP_ACCOUNTS JSON 解析失败: {e}")
             sys.exit(1)
@@ -74,95 +73,82 @@ def get_accounts():
         logger.error("未找到任何账号配置。请设置 DP_ACCOUNTS 或 DP_EMAIL+DP_PASSWORD")
         sys.exit(1)
 
-# ======================= 通知模块 =======================
-def send_bark_notification(title, body, level="active", badge=None):
-    """发送 Bark 通知"""
-    if not BARK_KEY:
-        return
-    server_url = BARK_SERVER if BARK_SERVER else "https://api.day.app"
-    api_url = f"{server_url.rstrip('/')}/{BARK_KEY}"
-    try:
-        payload = {"title": title, "body": body, "group": "DigitalPlat Renew", "level": level}
-        if badge is not None:
-            payload["badge"] = badge
-        response = requests.post(api_url, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info("Bark 通知已发送")
-    except Exception as e:
-        logger.error(f"Bark 发送失败: {e}")
 
-def send_wechat_notification(title, body):
-    """发送微信通知（通过自定义 API）"""
-    if not ENABLE_WECHAT:
-        return
-    if not WECHAT_API_URL or not WECHAT_AUTH_TOKEN:
-        logger.warning("微信通知已启用但缺少必要配置 (WECHAT_API_URL 或 WECHAT_AUTH_TOKEN)")
-        return
-    try:
-        # 假设接口需要 POST JSON，字段名为 token, title, content
-        payload = {
-            "token": WECHAT_AUTH_TOKEN,
-            "title": title,
-            "content": body
-        }
-        response = requests.post(WECHAT_API_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info("微信通知已发送")
-    except Exception as e:
-        logger.error(f"微信通知发送失败: {e}")
+# ======================= 统一通知模块 =======================
+def send_notification(title, body, level="active", badge=None):
+    """统一通知入口：同时调用所有已启用的渠道"""
+    # 1. Bark
+    if BARK_KEY:
+        server_url = BARK_SERVER if BARK_SERVER else "https://api.day.app"
+        api_url = f"{server_url.rstrip('/')}/{BARK_KEY}"
+        try:
+            payload = {
+                "title": title,
+                "body": body,
+                "group": "DigitalPlat Renew",
+                "level": level,
+            }
+            if badge is not None:
+                payload["badge"] = badge
+            resp = requests.post(api_url, json=payload, timeout=10)
+            resp.raise_for_status()
+            logger.info("Bark 通知已发送")
+        except Exception as e:
+            logger.error(f"Bark 发送失败: {e}")
 
-def send_telegram_notification(title, body):
-    """发送 Telegram 通知"""
-    if not ENABLE_TELEGRAM:
-        return
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning("Telegram 通知已启用但缺少必要配置")
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": f"*{title}*\n\n{body}",
-        "parse_mode": "Markdown"
-    }
-    try:
-        response = requests.post(url, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info("Telegram 通知已发送")
-    except Exception as e:
-        logger.error(f"Telegram 通知发送失败: {e}")
+    # 2. 微信
+    if ENABLE_WECHAT:
+        if WECHAT_API_URL and WECHAT_AUTH_TOKEN:
+            try:
+                payload = {
+                    "token": WECHAT_AUTH_TOKEN,
+                    "title": title,
+                    "content": body,
+                }
+                resp = requests.post(WECHAT_API_URL, json=payload, timeout=10)
+                resp.raise_for_status()
+                logger.info("微信通知已发送")
+            except Exception as e:
+                logger.error(f"微信通知发送失败: {e}")
+        else:
+            logger.warning("微信通知已启用但缺少必要配置")
 
-def send_unified_notification(title, body, level="active", badge=None):
-    """
-    统一的推送接口：同时调用所有已启用的渠道
-    """
-    # Bark
-    send_bark_notification(title, body, level, badge)
-    # 微信
-    send_wechat_notification(title, body)
-    # Telegram
-    send_telegram_notification(title, body)
+    # 3. Telegram（纯文本，避免 Markdown 转义问题）
+    if ENABLE_TELEGRAM:
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": f"{title}\n\n{body}",
+                "disable_web_page_preview": True,
+            }
+            try:
+                resp = requests.post(url, json=payload, timeout=10)
+                resp.raise_for_status()
+                logger.info("Telegram 通知已发送")
+            except Exception as e:
+                logger.error(f"Telegram 通知发送失败: {e}")
+        else:
+            logger.warning("Telegram 通知已启用但缺少必要配置")
 
-# 为了保持与原脚本兼容，保留原函数名
-def send_bark_notification_legacy(title, body, level="active", badge=None):
-    """兼容旧调用，实际调用统一接口"""
-    send_unified_notification(title, body, level, badge)
 
-# 重命名，避免冲突（原脚本中所有 send_bark_notification 调用需替换为 send_unified_notification）
-# 但为了最小改动，直接将原函数名指向新函数
-send_bark_notification = send_unified_notification
+# 兼容旧函数名
+send_bark_notification = send_notification
+
 
 # ======================= 辅助函数 =======================
 def save_results(renewed_domains, failed_domains, account_email):
-    """保存单个账号的处理结果到JSON文件（按账号区分）"""
+    """保存单个账号的处理结果"""
+    safe_email = account_email.replace("@", "_").replace(".", "_")
     results = {
         "account": account_email,
         "timestamp": datetime.now().isoformat(),
         "renewed_count": len(renewed_domains),
         "failed_count": len(failed_domains),
         "renewed_domains": renewed_domains,
-        "failed_domains": failed_domains
+        "failed_domains": failed_domains,
     }
-    filename = f"renewal_results_{account_email.replace('@', '_')}.json"
+    filename = f"renewal_results_{safe_email}.json"
     try:
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
@@ -170,38 +156,58 @@ def save_results(renewed_domains, failed_domains, account_email):
     except Exception as e:
         logger.error(f"保存结果失败: {e}")
 
-async def retry_operation(operation, max_retries=3, delay=2):
-    """重试装饰器"""
+
+async def retry_operation(operation, max_retries=3, delay=2, op_name="operation"):
+    """通用重试函数"""
+    last_err = None
     for attempt in range(max_retries):
         try:
             return await operation()
         except Exception as e:
+            last_err = e
             if attempt == max_retries - 1:
+                logger.error(f"{op_name} 最终失败: {e}")
                 raise
-            logger.warning(f"操作失败，{delay}秒后重试... (尝试 {attempt + 1}/{max_retries})")
+            logger.warning(
+                f"{op_name} 失败，{delay}秒后重试... (尝试 {attempt + 1}/{max_retries}) - {e}"
+            )
             await asyncio.sleep(delay)
+    raise last_err
+
 
 async def simulate_human_behavior(page):
     """模拟人类行为"""
-    await page.mouse.move(random.randint(100, 500), random.randint(100, 500))
-    await asyncio.sleep(random.uniform(0.5, 2))
+    try:
+        await page.mouse.move(random.randint(100, 500), random.randint(100, 500))
+        await asyncio.sleep(random.uniform(0.5, 2))
+    except Exception:
+        pass
+
 
 async def setup_browser_context(playwright):
-    """设置浏览器上下文"""
-    browser = await playwright.firefox.launch(
+    """设置浏览器上下文（Chromium + 反检测）"""
+    browser = await playwright.chromium.launch(
         headless=True,
         args=[
-            '--disable-blink-features=AutomationControlled',
-            '--no-sandbox',
-            '--disable-gpu',
-            '--window-size=1920,1080',
-        ]
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--window-size=1920,1080",
+            "--disable-dev-shm-usage",
+        ],
     )
     context = await browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
-        viewport={"width": 1920, "height": 1080}
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        viewport={"width": 1920, "height": 1080},
+        locale="en-US",
+        timezone_id="America/New_York",
     )
     return browser, context
+
 
 async def add_anti_detection_scripts(page):
     """添加反检测脚本"""
@@ -209,118 +215,183 @@ async def add_anti_detection_scripts(page):
         "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})",
         "window.navigator.chrome = { runtime: {} };",
         "Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});",
-        "Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});"
+        "Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});",
+        "Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});",
     ]
     for script in scripts:
         await page.add_init_script(script)
 
+
+async def wait_for_login_form(page, email):
+    """等待登录表单出现，识别 Cloudflare 验证页"""
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            # 顺带检测 Cloudflare 验证页面文案
+            try:
+                body_text = await page.inner_text("body", timeout=3000)
+                if "Just a moment" in body_text or "Checking your browser" in body_text:
+                    logger.info(f"检测到 Cloudflare 验证页面，等待自动跳过... (尝试 {attempt + 1})")
+            except Exception:
+                pass
+
+            await page.wait_for_selector(
+                "input[name='email']", timeout=TIMEOUTS["login_wait"]
+            )
+            logger.info("检测到登录表单，已进入账号密码输入页面。")
+            return
+        except PlaywrightTimeoutError:
+            logger.warning(
+                f"尝试 {attempt + 1} 失败：在 {TIMEOUTS['login_wait']/1000}s 内未检测到登录输入框"
+            )
+            if attempt == max_attempts - 1:
+                await page.screenshot(path="login_timeout_error.png")
+                with open("login_timeout_page_source.html", "w", encoding="utf-8") as f:
+                    f.write(await page.content())
+                send_notification(
+                    "DigitalPlat 登录失败",
+                    f"账号 {email} 多次尝试后未能跳过人机验证，请检查截图。",
+                    level="timeSensitive",
+                )
+                raise Exception(f"登录失败：无法跳过人机验证 ({email})")
+            await asyncio.sleep(5)
+
+
 async def login(page, email, password):
-    """执行登录流程（使用传入的邮箱密码）"""
+    """执行登录流程"""
     logger.info("正在导航到登录页面...")
     await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=TIMEOUTS["page_load"])
     await simulate_human_behavior(page)
 
     logger.info("等待人机验证页自动跳转到登录表单...")
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            await page.wait_for_selector("input[name='email']", timeout=TIMEOUTS["login_wait"])
-            logger.info("检测到登录表单，已进入账号密码输入页面。")
-            break
-        except PlaywrightTimeoutError:
-            logger.warning(f"尝试 {attempt + 1} 失败：在{TIMEOUTS['login_wait']/1000}秒内未检测到登录输入框。")
-            if attempt == max_attempts - 1:
-                logger.error("所有尝试均失败，退出。")
-                await page.screenshot(path="login_timeout_error.png")
-                with open("login_timeout_page_source.html", "w", encoding="utf-8") as f:
-                    f.write(await page.content())
-                send_bark_notification(
-                    "DigitalPlat 登录失败",
-                    f"账号 {email} 多次尝试后未能跳过人机验证，请检查截图。",
-                    level="timeSensitive"
-                )
-                raise Exception(f"登录失败：无法跳过人机验证 ({email})")
-            await asyncio.sleep(5)
+    await wait_for_login_form(page, email)
 
     logger.info("正在填写登录信息...")
     await page.type("input[name='email']", email, delay=random.randint(50, 150))
     await page.type("input[name='password']", password, delay=random.randint(50, 150))
 
     logger.info("正在点击登录按钮...")
-    async with page.expect_navigation(wait_until="networkidle", timeout=TIMEOUTS["navigation"]):
-        await page.click("button[type='submit']")
+    await page.click("button[type='submit']")
+    # 用宽松等待替代 expect_navigation，兼容 SPA / AJAX
+    try:
+        await page.wait_for_url("**/panel/main**", timeout=TIMEOUTS["navigation"])
+    except PlaywrightTimeoutError:
+        await page.wait_for_load_state("networkidle", timeout=TIMEOUTS["navigation"])
 
     if "/panel/main" not in page.url:
-        logger.error(f"登录失败，当前URL为: {page.url}")
-        await page.screenshot(path=f"login_failed_{email.replace('@','_')}.png")
-        send_bark_notification(
+        logger.error(f"登录失败，当前 URL 为: {page.url}")
+        safe_email = email.replace("@", "_").replace(".", "_")
+        await page.screenshot(path=f"login_failed_{safe_email}.png")
+        send_notification(
             "DigitalPlat 登录失败",
             f"账号 {email} 点击登录后未能跳转到仪表盘。",
-            level="timeSensitive"
+            level="timeSensitive",
         )
         raise Exception(f"登录失败：未能跳转到仪表盘 ({email})")
 
     logger.info(f"账号 {email} 登录成功！")
 
+
+async def click_and_wait(page, locator, timeout=None):
+    """点击并等待页面稳定，兼容 AJAX 和导航两种情况"""
+    timeout = timeout or TIMEOUTS["navigation"]
+    await locator.click()
+    try:
+        await page.wait_for_load_state("networkidle", timeout=timeout)
+    except PlaywrightTimeoutError:
+        logger.warning("等待 networkidle 超时，继续后续步骤")
+
+
 async def process_domain(page, domain_name, domain_url_path, base_url):
-    """处理单个域名的续期（与原逻辑完全一致）"""
+    """处理单个域名的续期"""
     try:
         full_domain_url = base_url + domain_url_path
         logger.info(f"正在访问 {domain_name} 的管理页面: {full_domain_url}")
         await page.goto(full_domain_url, wait_until="networkidle", timeout=TIMEOUTS["navigation"])
 
         renew_link = page.locator("a[href*='renewdomain']")
-        if await renew_link.count() > 0:
-            logger.info("找到续期链接，开始续期流程...")
-            async with page.expect_navigation(wait_until="networkidle", timeout=TIMEOUTS["navigation"]):
-                await renew_link.click()
-
-            order_button = page.locator("button:has-text('Order Now'), button:has-text('Continue')").first
-            if await order_button.count() > 0:
-                async with page.expect_navigation(wait_until="networkidle", timeout=TIMEOUTS["navigation"]):
-                    await order_button.click()
-
-                agree_checkbox = page.locator("input[name='accepttos']")
-                if await agree_checkbox.count() > 0:
-                    await agree_checkbox.check()
-
-                checkout_button = page.locator("button#checkout")
-                if await checkout_button.count() > 0:
-                    async with page.expect_navigation(wait_until="networkidle", timeout=TIMEOUTS["navigation"]):
-                        await checkout_button.click()
-
-                    await asyncio.sleep(2)
-                    page_content = await page.inner_text("body")
-                    if "Order Confirmation" in page_content or "successfully" in page_content.lower():
-                        logger.info(f"成功！域名 {domain_name} 续期订单已提交。")
-                        return True, None
-                    else:
-                        error_msg = f"{domain_name} (确认失败)"
-                        logger.warning(f"域名 {domain_name} 最终确认失败")
-                        await page.screenshot(path=f"error_{domain_name}_confirm.png")
-                        return False, error_msg
-                else:
-                    error_msg = f"{domain_name} (无Checkout按钮)"
-                    logger.warning(f"在 {domain_name} 的续期页面找不到 'Checkout' 按钮")
-                    return False, error_msg
-            else:
-                error_msg = f"{domain_name} (无Order按钮)"
-                logger.warning(f"在 {domain_name} 的续期页面找不到 'Order Now' 按钮")
-                return False, error_msg
-        else:
+        if await renew_link.count() == 0:
             logger.info("在此域名详情页未找到续期链接，可能无需续期。")
             return None, None
+
+        logger.info("找到续期链接，开始续期流程...")
+        await click_and_wait(page, renew_link.first)
+
+        order_button = page.locator(
+            "button:has-text('Order Now'), button:has-text('Continue')"
+        ).first
+        if await order_button.count() == 0:
+            error_msg = f"{domain_name} (无 Order 按钮)"
+            logger.warning(f"在 {domain_name} 的续期页面找不到 'Order Now' 按钮")
+            return False, error_msg
+
+        await click_and_wait(page, order_button)
+
+        agree_checkbox = page.locator("input[name='accepttos']")
+        if await agree_checkbox.count() > 0:
+            try:
+                await agree_checkbox.check()
+            except Exception as e:
+                logger.warning(f"勾选服务条款时出错（可能已勾选）: {e}")
+
+        checkout_button = page.locator("button#checkout")
+        if await checkout_button.count() == 0:
+            error_msg = f"{domain_name} (无 Checkout 按钮)"
+            logger.warning(f"在 {domain_name} 的续期页面找不到 'Checkout' 按钮")
+            return False, error_msg
+
+        await click_and_wait(page, checkout_button)
+        await asyncio.sleep(2)
+
+        page_content = await page.inner_text("body")
+        if "Order Confirmation" in page_content or "successfully" in page_content.lower():
+            logger.info(f"成功！域名 {domain_name} 续期订单已提交。")
+            return True, None
+        else:
+            error_msg = f"{domain_name} (确认失败)"
+            logger.warning(f"域名 {domain_name} 最终确认失败")
+            safe_name = domain_name.replace(".", "_")
+            await page.screenshot(path=f"error_{safe_name}_confirm.png")
+            return False, error_msg
+
     except Exception as e:
         error_msg = f"{domain_name} (异常: {str(e)})"
         logger.error(f"处理域名 {domain_name} 时发生错误: {e}")
-        await page.screenshot(path=f"error_{domain_name}_exception.png")
+        try:
+            safe_name = domain_name.replace(".", "_")
+            await page.screenshot(path=f"error_{safe_name}_exception.png")
+        except Exception:
+            pass
         return False, error_msg
+
+
+async def collect_domain_info(page):
+    """先提取所有域名信息到普通 list，避免 locator stale"""
+    rows = await page.locator("table.table-domains tbody tr").all()
+    info_list = []
+    for row in rows:
+        try:
+            onclick_attr = await row.get_attribute("onclick")
+            if not onclick_attr or "'" not in onclick_attr:
+                continue
+            domain_url_path = onclick_attr.split("'")[1]
+            domain_name = (await row.locator("td:nth-child(1)").inner_text()).strip()
+            status = (await row.locator("td:nth-child(3)").inner_text()).strip()
+            info_list.append(
+                {"name": domain_name, "path": domain_url_path, "status": status}
+            )
+        except Exception as e:
+            logger.warning(f"提取域名行信息时出错: {e}")
+    return info_list
+
 
 async def renew_for_account(account, account_index, total_accounts):
     """为单个账号执行完整的续期流程"""
     email = account["email"]
     password = account["password"]
-    logger.info(f"\n{'='*50}\n开始处理账号 [{account_index}/{total_accounts}]: {email}\n{'='*50}")
+    logger.info(
+        f"\n{'='*50}\n开始处理账号 [{account_index}/{total_accounts}]: {email}\n{'='*50}"
+    )
 
     renewed_domains = []
     failed_domains = []
@@ -331,82 +402,93 @@ async def renew_for_account(account, account_index, total_accounts):
         await add_anti_detection_scripts(page)
 
         try:
-            # 登录
-            await login(page, email, password)
+            # 登录走重试
+            await retry_operation(
+                lambda: login(page, email, password),
+                max_retries=2,
+                delay=5,
+                op_name=f"login({email})",
+            )
 
-            # 导航到域名列表
             logger.info("正在导航到域名管理页面...")
             await page.goto(DOMAINS_URL, wait_until="networkidle", timeout=TIMEOUTS["navigation"])
-            await page.wait_for_selector("table.table-domains", timeout=TIMEOUTS["element_wait"])
+            await page.wait_for_selector(
+                "table.table-domains", timeout=TIMEOUTS["element_wait"]
+            )
             logger.info("已到达域名列表页面。")
 
-            domain_rows = await page.locator("table.table-domains tbody tr").all()
-            if not domain_rows:
+            # ⭐ 关键修复：先把所有域名信息一次性提取出来
+            domain_info = await collect_domain_info(page)
+
+            if not domain_info:
                 logger.info("未找到任何域名。")
             else:
-                logger.info(f"共找到 {len(domain_rows)} 个域名，开始逐一检查...")
-                base_url = "https://dash.domain.digitalplat.org/"
+                logger.info(f"共找到 {len(domain_info)} 个域名，开始逐一检查...")
+                for i, info in enumerate(domain_info):
+                    logger.info(
+                        f"\n[{i+1}/{len(domain_info)}] 检查域名: {info['name']} "
+                        f"(状态: {info['status']})"
+                    )
+                    success, error_msg = await process_domain(
+                        page, info["name"], info["path"], BASE_URL
+                    )
+                    if success:
+                        renewed_domains.append(info["name"])
+                    elif error_msg:
+                        failed_domains.append(error_msg)
 
-                for i, row in enumerate(domain_rows):
-                    onclick_attr = await row.get_attribute("onclick")
-                    if onclick_attr:
-                        domain_url_path = onclick_attr.split("'")[1]
-                        domain_name = await row.locator("td:nth-child(1)").inner_text()
-                        status = await row.locator("td:nth-child(3)").inner_text()
-                        domain_name = domain_name.strip()
-                        status = status.strip()
-                        logger.info(f"\n[{i+1}/{len(domain_rows)}] 检查域名: {domain_name} (状态: {status})")
+                    logger.info("正在返回域名列表页面...")
+                    try:
+                        await page.goto(
+                            DOMAINS_URL,
+                            wait_until="networkidle",
+                            timeout=TIMEOUTS["navigation"],
+                        )
+                    except Exception as e:
+                        logger.warning(f"返回列表页失败: {e}")
 
-                        success, error_msg = await process_domain(page, domain_name, domain_url_path, base_url)
-                        if success:
-                            renewed_domains.append(domain_name)
-                        elif error_msg:
-                            failed_domains.append(error_msg)
-
-                        # 返回域名列表页处理下一个
-                        logger.info("正在返回域名列表页面...")
-                        await page.goto(DOMAINS_URL, wait_until="networkidle", timeout=TIMEOUTS["navigation"])
-
-            # 保存该账号的结果
             save_results(renewed_domains, failed_domains, email)
 
         except Exception as e:
             logger.error(f"账号 {email} 处理过程中出现严重错误: {e}")
             failed_domains.append(f"整体错误: {str(e)}")
-            send_bark_notification(
+            send_notification(
                 f"DigitalPlat 账号处理失败 - {email}",
                 f"错误信息: {str(e)}",
-                level="timeSensitive"
+                level="timeSensitive",
             )
         finally:
+            await context.close()
             await browser.close()
 
     return email, renewed_domains, failed_domains
+
 
 # ======================= 主函数 =======================
 async def run_renewal():
     """主入口：循环处理所有账号，最后汇总通知"""
     accounts = get_accounts()
     total = len(accounts)
-
     all_renewed = []
     all_failed = []
     account_details = []
 
     for idx, acc in enumerate(accounts, start=1):
-        email, renewed, failed = await renew_for_account(acc, idx, total)
-        account_details.append({
-            "email": email,
-            "renewed": renewed,
-            "failed": failed
-        })
+        try:
+            email, renewed, failed = await renew_for_account(acc, idx, total)
+        except Exception as e:
+            email = acc.get("email", "unknown")
+            renewed, failed = [], [f"账号级异常: {str(e)}"]
+            logger.error(f"账号 {email} 顶层异常: {e}")
+
+        account_details.append({"email": email, "renewed": renewed, "failed": failed})
         all_renewed.extend(renewed)
         all_failed.extend(failed)
-        # 避免请求过快，间隔5秒
+
         if idx < total:
             await asyncio.sleep(5)
 
-    # ========== 发送汇总通知 ==========
+    # 汇总通知
     if not all_renewed and not all_failed:
         title = "DigitalPlat 续期检查完成"
         body = "所有账号的域名均已检查完毕，本次没有需要续期或处理失败的域名。"
@@ -427,8 +509,9 @@ async def run_renewal():
                     lines.append(f"  失败: {', '.join(detail['failed'])}")
         body = "\n".join(lines)
 
-    send_bark_notification(title, body)
+    send_notification(title, body)
     logger.info("所有账号处理完毕，通知已发送。")
+
 
 if __name__ == "__main__":
     asyncio.run(run_renewal())
