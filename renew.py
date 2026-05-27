@@ -90,9 +90,7 @@ def send_notification(title, body, level="active", badge=None):
             logger.info("Telegram 通知已发送")
         except Exception as e: logger.error(f"Telegram 通知发送失败: {e}")
 
-send_bark_notification = send_notification
-
-# ======================= 辅助函数 =======================
+# ======================= 辅助功能 =======================
 def save_results(renewed_domains, failed_domains, account_email):
     safe_email = account_email.replace("@", "_").replace(".", "_")
     results = {
@@ -125,17 +123,63 @@ async def simulate_human_behavior(page):
         await asyncio.sleep(random.uniform(0.5, 1.5))
     except Exception: pass
 
+# ======================= 🌐 免费代理池获取模块 =======================
+async def fetch_free_proxy():
+    """
+    自动从多个公共 API 随机抓取可用的免费高匿代理，用于清洗 GitHub Actions 机房 IP
+    """
+    logger.info("正在尝试从公共代理池捞取免费节点以清洗机房 IP 风控...")
+    
+    # 策略 1: 尝试从 GeoNode 捞取高匿名 HTTPS 代理
+    try:
+        url = "https://proxylist.geonode.com/api/proxy-list?limit=20&page=1&sort_by=lastChecked&sort_type=desc&protocols=https"
+        resp = requests.get(url, timeout=10).json()
+        if resp.get("data"):
+            valid_proxies = [p for p in resp["data"] if p.get("ip") and p.get("port")]
+            if valid_proxies:
+                proxy_data = random.choice(valid_proxies)
+                ip = proxy_data["ip"]
+                port = proxy_data["port"]
+                logger.info(f"成功命中 GeoNode 代理节点: {ip}:{port}")
+                return f"http://{ip}:{port}"
+    except Exception as e:
+        logger.warning(f"GeoNode 代理池抓取异常: {e}，正在切换备用集群...")
+    
+    # 策略 2: 备份方案，从 ProxyScrape 捞取高匿名 HTTP/HTTPS 列表
+    try:
+        url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all"
+        resp = requests.get(url, timeout=10)
+        proxies = [p.strip() for p in resp.text.strip().split("\n") if p.strip()]
+        if proxies:
+            chosen = random.choice(proxies)
+            logger.info(f"成功命中 ProxyScrape 备份代理节点: {chosen}")
+            return f"http://{chosen}"
+    except Exception as e:
+        logger.error(f"所有免费代理池接口均未返回有效数据: {e}")
+    
+    return None
+
 async def setup_browser_context(playwright):
-    browser = await playwright.chromium.launch(
-        headless=False,  # 🛠️ 必须保持有头模式，由 GitHub Actions 上的 Xvfb 接管
-        args=[
+    launch_kwargs = {
+        "headless": False,  # 必须保持有头模式配合 Xvfb
+        "args": [
             "--no-sandbox",
             "--disable-dev-shm-usage",
             "--disable-blink-features=AutomationControlled",
             "--window-size=1920,1080",
             "--disable-infobars",
         ],
-    )
+    }
+
+    # 🛠️ 自动注入代理池获取到的外部代理 IP
+    proxy_server = await fetch_free_proxy()
+    if proxy_server:
+        logger.info(f"🚀 正在将网络出口路由重定向至代理: {proxy_server}")
+        launch_kwargs["proxy"] = {"server": proxy_server}
+    else:
+        logger.warning("⚠️ 本次未能获取到有效代理，将直接使用 GitHub Actions 原生机房 IP 裸连...")
+
+    browser = await playwright.chromium.launch(**launch_kwargs)
     context = await browser.new_context(
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         viewport={"width": 1920, "height": 1080},
@@ -149,9 +193,8 @@ async def solve_cloudflare_turnstile(page):
     针对国外机房高风险 IP 弹出的 Cloudflare Turnstile 验证框进行主动识别和物理点击
     """
     logger.info("正在扫描页面是否包含 Cloudflare Turnstile 人机挑战盾...")
-    await page.wait_for_timeout(4000) # 给 CF 盾留出渲染时间
+    await page.wait_for_timeout(4000)
     
-    # 定义 Turnstile 特征复选框的可能定位器
     selectors = [
         "iframe[src*='challenge-platform']",
         "div[id*='turnstile'] iframe",
@@ -170,20 +213,17 @@ async def solve_cloudflare_turnstile(page):
 
     if turnstile_frame:
         try:
-            # 在 iframe 内部寻找复选框的可点击核心元素
             checkbox = await turnstile_frame.wait_for_selector(
                 "input[type='checkbox'], #challenge-stage, .cb-i, .mark", 
                 timeout=5000
             )
             if checkbox:
-                # 获取其在 1920x1080 虚拟屏幕上的绝对物理坐标
                 box = await checkbox.bounding_box()
                 if box:
                     x = box["x"] + box["width"] / 2
                     y = box["y"] + box["height"] / 2
                     logger.info(f"计算出验证框物理中心坐标: X={x}, Y={y}。正在模拟人类轨迹移动并点击...")
                     
-                    # 模拟真人滑动轨迹与点击按下提起的过程
                     await page.mouse.move(x, y, steps=12)
                     await page.mouse.down()
                     await page.wait_for_timeout(random.randint(100, 200))
@@ -204,11 +244,10 @@ async def wait_for_login_form(page, email):
             if "Just a moment" in body_text or "Checking your browser" in body_text:
                 logger.info(f"⏳ 检测到 Cloudflare 5秒防刷盾，静置等待...")
             elif "Access denied" in body_text or "Error 1020" in body_text:
-                logger.error("🚫 糟糕，当前 GitHub Actions 分配到的机房 IP 已被该网站拉黑 (Error 1020)")
+                logger.error("🚫 当前代理 IP/机房 IP 已被该网站拉黑 (Error 1020)")
                 await page.screenshot(path=f"cf_blocked_{attempt + 1}.png", full_page=True)
         except Exception: pass
 
-        # 触发主动过盾函数
         await solve_cloudflare_turnstile(page)
 
         try:
@@ -217,7 +256,7 @@ async def wait_for_login_form(page, email):
             return
         except PlaywrightTimeoutError:
             await page.screenshot(path=f"login_wait_fail_att_{attempt + 1}.png", full_page=True)
-            logger.warning(f"尝试 [{attempt + 1}/{max_attempts}] 无法定位输入框，已截留现场，5秒后重试...")
+            logger.warning(f"尝试 [{attempt + 1}/{max_attempts}] 无法定位输入框，5秒后重试...")
             if attempt == max_attempts - 1:
                 send_notification("DigitalPlat 登录失败", f"账号 {email} 无法突破人机验证盾。")
                 raise Exception(f"突破人机验证拦截失败 ({email})")
@@ -322,10 +361,10 @@ async def renew_for_account(account, account_index, total_accounts):
     failed_domains = []
 
     async with async_playwright() as p:
-        browser, context = await setup_browser_context(p)
-        page = await context.new_page()
-
         try:
+            browser, context = await setup_browser_context(p)
+            page = await context.new_page()
+            
             await retry_operation(
                 lambda: login(page, email, password),
                 max_retries=2, delay=6, op_name=f"Auth({email})"
@@ -356,8 +395,10 @@ async def renew_for_account(account, account_index, total_accounts):
             logger.error(f"账号 {email} 上层架构崩溃: {e}")
             failed_domains.append(f"管道异常: {str(e)}")
         finally:
-            await context.close()
-            browser.close()
+            try:
+                await context.close()
+                browser.close()
+            except Exception: pass
 
     return email, renewed_domains, failed_domains
 
@@ -379,10 +420,8 @@ async def run_renewal():
         all_failed.extend(failed)
 
         if idx < total:
-            # 账号间留出合理的冷却时间
             await asyncio.sleep(random.randint(5, 10))
 
-    # 构建并推送汇总报告
     if not all_renewed and not all_failed:
         title = "DigitalPlat 展期检查闭环"
         body = "所有配置账号的域名状态完好，本次无可展期目标。"
