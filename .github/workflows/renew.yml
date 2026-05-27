@@ -1,11 +1,14 @@
 name: Domain Renewal
+
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天运行一次
-  workflow_dispatch:  # 允许手动触发
+    - cron: '0 0 * * *'       # 每天 UTC 0 点运行
+  workflow_dispatch:          # 支持手动触发
+
 jobs:
   renew:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -13,14 +16,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'  # 使用稳定的 Python 版本
+          python-version: '3.10'
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2t64
 
-      - name: Clear Playwright cache
+      - name: Clear Playwright cache (optional)
         run: |
           rm -rf /home/runner/.cache/ms-playwright
 
@@ -42,7 +45,22 @@ jobs:
       - name: Run renew script
         run: python renew.py
         env:
-          DP_EMAIL: ${{ secrets.DP_EMAIL }}
-          DP_PASSWORD: ${{ secrets.DP_PASSWORD }}
+          # ---------- 账号配置（推荐多账号 JSON）----------
+          DP_ACCOUNTS: ${{ secrets.DP_ACCOUNTS }}
+          # 可选：如果仍想使用单账号模式，可以取消下面两行的注释并删除 DP_ACCOUNTS
+          # DP_EMAIL: ${{ secrets.DP_EMAIL }}
+          # DP_PASSWORD: ${{ secrets.DP_PASSWORD }}
+
+          # ---------- Bark 推送 ----------
           BARK_KEY: ${{ secrets.BARK_KEY }}
-          BARK_SERVER: ${{ secrets.BARK_SERVER }}
+          BARK_SERVER: ${{ secrets.BARK_SERVER }}     # 自建服务器地址（可选）
+
+          # ---------- 微信推送（可选）----------
+          ENABLE_WECHAT: ${{ secrets.ENABLE_WECHAT }}           # 设为 'true' 启用
+          WECHAT_API_URL: ${{ secrets.WECHAT_API_URL }}
+          WECHAT_AUTH_TOKEN: ${{ secrets.WECHAT_AUTH_TOKEN }}
+
+          # ---------- Telegram 推送（可选）----------
+          ENABLE_TELEGRAM: ${{ secrets.ENABLE_TELEGRAM }}       # 设为 'true' 启用
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
