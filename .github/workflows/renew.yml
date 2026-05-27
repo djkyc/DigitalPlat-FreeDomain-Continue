@@ -1,10 +1,12 @@
-name: Domain Renewal
-
-于:
-  schedule:
-    - cron: '0 0 1 */3 *'   # 每季度第一天 UTC 0点运行（北京时间 8点）
-  workflow_dispatch:          # 支持手动触发
 name: DigitalPlat 域名自动续期
+
+on:
+  schedule:
+    # 每天 UTC 02:23 运行（北京时间 10:23）
+    # 错开整点可以有效降低被 Cloudflare 自动化风控策略拦截的概率
+    - cron: '23 2 * * *'
+  # 支持手动触发
+  workflow_dispatch:
 
 jobs:
   renew:
@@ -16,33 +18,35 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 安装 Python
+      # 2. 安装 Python 环境
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # 3. 安装 Xvfb（虚拟显示，让 headless=False 的 Chromium 能跑起来）
-      - name: Install Xvfb and dependencies
+      # 3. 安装 Xvfb 及浏览器所需的底层核心依赖
+      - name: Install Xvfb and system dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y xvfb libgbm-dev
+          sudo apt-get install -y xvfb libgbm-dev libasound2 libtinfo5
 
-      # 4. 安装 Python 依赖
+      # 4. 安装 Python 依赖库
       - name: Install Python dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install patchright requests
 
-      # 5. 安装 patchright 的 Chromium（必须单独安装，和 playwright 不共用）
+      # 5. 安装 patchright 专属的 Chromium 内核及其全量系统依赖
       - name: Install patchright Chromium
         run: |
-          patchright install chromium --with-deps
+          python -m patchright install chromium --with-deps
 
-      # 6. 运行续期脚本（用 xvfb-run 包一层，提供虚拟显示给 headless=False 的 Chromium）
+      # 6. 在虚拟桌面环境下运行续期脚本
       - name: Run renew script
         env:
           DP_ACCOUNTS:        ${{ secrets.DP_ACCOUNTS }}
+          DP_EMAIL:           ${{ secrets.DP_EMAIL }}
+          DP_PASSWORD:        ${{ secrets.DP_PASSWORD }}
           BARK_KEY:           ${{ secrets.BARK_KEY }}
           BARK_SERVER:        ${{ secrets.BARK_SERVER }}
           ENABLE_WECHAT:      ${{ secrets.ENABLE_WECHAT }}
@@ -54,7 +58,7 @@ jobs:
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" python renew.py
 
-      # 7. 上传所有截图和结果文件（无论成功失败都上传，方便排查）
+      # 7. 无论成功与否，一律上传运行截图和 JSON 报告，极大方便在面板查看卡盾现场
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
