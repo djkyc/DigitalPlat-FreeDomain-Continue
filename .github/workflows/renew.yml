@@ -1,9 +1,8 @@
-name: DigitalPlat 域名自动续期 (代理破盾版)
+name: DigitalPlat 域名自动续期 (有头浏览器破盾版)
 
 on:
   schedule:
-    # 每天 UTC 02:23 运行（北京时间 10:23）
-    # 错开整点可以有效降低被 Cloudflare 自动化风控策略拦截的概率
+    # 北京时间每天上午 10:23 运行（故意错开整点防风控）
     - cron: '23 2 * * *'
   # 支持手动触发
   workflow_dispatch:
@@ -14,34 +13,31 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # 1. 拉取代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 安装 Python 环境
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # 3. 安装 Xvfb 及浏览器所需的底层核心依赖
+      # 安装虚拟桌面及 Chromium 核心依赖
       - name: Install Xvfb and system dependencies
         run: |
           sudo apt-get update -y
           sudo apt-get install -y xvfb libgbm-dev libasound2 libtinfo5
 
-      # 4. 安装 Python 依赖库
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install patchright requests
 
-      # 5. 安装 patchright 专属的 Chromium 内核及其全量系统依赖
+      # 强力安装标准 Chromium 内核
       - name: Install patchright Chromium
         run: |
           python -m patchright install chromium --with-deps
 
-      # 6. 在虚拟桌面环境下运行续期脚本
+      # 使用 Xvfb 虚拟环境伪装 1080P 真实显示器运行
       - name: Run renew script
         env:
           DP_ACCOUNTS:        ${{ secrets.DP_ACCOUNTS }}
@@ -49,24 +45,19 @@ jobs:
           DP_PASSWORD:        ${{ secrets.DP_PASSWORD }}
           BARK_KEY:           ${{ secrets.BARK_KEY }}
           BARK_SERVER:        ${{ secrets.BARK_SERVER }}
-          ENABLE_WECHAT:      ${{ secrets.ENABLE_WECHAT }}
-          WECHAT_API_URL:     ${{ secrets.WECHAT_API_URL }}
-          WECHAT_AUTH_TOKEN:  ${{ secrets.WECHAT_AUTH_TOKEN }}
           ENABLE_TELEGRAM:    ${{ secrets.ENABLE_TELEGRAM }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 使用 xvfb-run 开启虚拟桌面环境执行脚本
           xvfb-run -a --server-args="-screen 0 1920x1080x24" python renew.py
 
-      # 7. 无论成功与否，一律上传运行截图和 JSON 报告，极大方便在面板查看卡盾现场
+      # 现场留存！如果卡盾或者失败，去 GitHub Actions 页面下载 zip 压缩包看现场截图
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: renew-artifacts-${{ github.run_id }}
+          name: cf-debug-screenshots-${{ github.run_id }}
           retention-days: 7
           path: |
             *.png
             *.html
-            *.json
