@@ -39,3 +39,31 @@
 
 * **安全性**: 您的账号密码存储在 GitHub 的加密 Secrets 中，脚本通过环境变量读取，不会暴露在代码或日志里，非常安全。
 * **脚本健壮性**: 本脚本依赖于 DigitalPlat 网站的页面结构。如果未来网站大幅改版，可能会导致脚本失效。届时需要根据新的页面结构更新脚本中的 CSS 选择器。
+
+---
+
+使用方法
+
+配置 GitHub Secrets（必须项）
+   
+在仓库 Settings → Secrets and variables → Actions 中添加：
+
+Secret 名称	说明	示例值
+
+DP_ACCOUNTS	多账号 JSON（推荐）	[{"email":"user1@example.com","password":"pass1"},{"email":"user2@example.com","password":"pass2"}]
+
+BARK_KEY	Bark 推送 Key（可选）	xxxxxxxxxxxxx
+
+ENABLE_WECHAT	启用微信推送（可选）	true
+
+WECHAT_API_URL	微信 API 地址（如启用则必填）	https://wx.dj.pp/wxsend
+
+WECHAT_AUTH_TOKEN	微信 API Token（如启用则必填）	sb123
+
+ENABLE_TELEGRAM	启用 Telegram 推送（可选）	true
+
+TELEGRAM_BOT_TOKEN	Telegram Bot Token（如启用则必填）	123456:ABCdef...
+
+TELEGRAM_CHAT_ID	Telegram 接收者 ID（如启用则必填）	123456789
+
+注：若仍想使用单账号模式，可以不设置 DP_ACCOUNTS，改为设置 DP_EMAIL 和 DP_PASSWORD，代码会自动兼容。
